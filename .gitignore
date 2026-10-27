@@ -1,0 +1,12 @@
+# Free Pascal build artifacts
+rgpad
+*.o
+*.ppu
+*.compiled
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

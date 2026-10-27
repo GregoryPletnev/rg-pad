@@ -1,0 +1,11 @@
+[Unit]
+Description=RG35XXH gamepad to keyboard/mouse mapper
+After=systemd-udevd.service
+
+[Service]
+ExecStart=/usr/local/bin/rgpad -c /etc/rgpad.conf
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
