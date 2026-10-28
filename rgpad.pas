@@ -3,7 +3,8 @@
   - plain buttons map to keys / mouse buttons / actions ([buttons])
   - left stick direction + X/A/B/Y types characters (chords, [layer ...])
   - right stick moves the mouse pointer ([mouse])
-  - a button combo toggles between mapping and raw gamepad passthrough
+  - a button combo toggles between mapping and raw gamepad passthrough;
+    SIGUSR1 / SIGUSR2 switch to passthrough / mapping (for games)
 
   Usage: rgpad [-c /etc/rgpad.conf] [-v] }
 program rgpad;
@@ -78,6 +79,8 @@ type
     Tok: array[0..8, 0..CHORD_BUTTONS - 1] of TKeyTok;
   end;
 
+  TStickMode = (smMouse, smKeys);
+
   TAxis = record
     Center, Half: Double;
     Value: Integer;
@@ -128,6 +131,12 @@ var
   end;
   Pressed: array[0..BUTTON_COUNT - 1] of TKeyTok;   { what a held button emitted }
   Held: array[0..BUTTON_COUNT - 1] of Boolean;
+  { right stick in key mode }
+  StickMode: TStickMode;
+  PrevRightDir: Integer;
+  StickThreshold, StickRepeat: Double;
+  StickKeys: array[0..7] of TKeyTok;
+  KeyPresses: array[0..7] of Integer;  { keycodes held per direction, for release }
   ToggleA, ToggleB: Integer;
   Axes: array[0..3] of TAxis;  { LX LY RX RY }
   ChordThreshold, MouseDeadzone, MouseSpeed, MouseAccel: Double;
@@ -137,6 +146,7 @@ var
   GamepadFd, JoystickFd, KbdFd, MouseFd: cint;
   Layer, ShiftCount: Integer;
   Active, Verbose, Terminated: Boolean;
+  WantMode: cint;  { set by SIGUSR1/2: 0 none, 1 passthrough, 2 mapping }
 
 { ---------- config ---------- }
 
@@ -352,23 +362,19 @@ begin
     Die('no [layer ...] sections');
   SetLength(Layers, LayerSections.Count);
   Words := TStringList.Create;
-  try
-    for I := 0 to LayerSections.Count - 1 do
+  for I := 0 to LayerSections.Count - 1 do
+  begin
+    Layers[I].Name := LayerSections[I];
+    for D := 0 to 8 do
     begin
-      Layers[I].Name := LayerSections[I];
-      for D := 0 to 8 do
-      begin
-        for B := 0 to CHORD_BUTTONS - 1 do
-          Layers[I].Tok[D, B].Code := 0;
-        SplitWords(CfgStr('layer#' + IntToStr(I), DirNames[D], ''), Words);
-        if Words.Count > CHORD_BUTTONS then
-          Die(Format('[layer %s] %s: more than 4 tokens', [LayerSections[I], DirNames[D]]));
-        for B := 0 to Words.Count - 1 do
-          Layers[I].Tok[D, B] := ParseToken(Words[B]);
-      end;
+      for B := 0 to CHORD_BUTTONS - 1 do
+        Layers[I].Tok[D, B].Code := 0;
+      SplitWords(CfgStr('layer#' + IntToStr(I), DirNames[D], ''), Words);
+      if Words.Count > CHORD_BUTTONS then
+        Die(Format('[layer %s] %s: more than 4 tokens', [LayerSections[I], DirNames[D]]));
+      for B := 0 to Words.Count - 1 do
+        Layers[I].Tok[D, B] := ParseToken(Words[B]);
     end;
-  finally
-    Words.Free;
   end;
 
   ChordThreshold := CfgFloat('left_stick', 'threshold', 0.5);
@@ -381,6 +387,24 @@ begin
   Axes[2].Invert := CfgBool('mouse', 'invert_x', False);
   Axes[3].Invert := CfgBool('mouse', 'invert_y', False);
   LedName := CfgStr('general', 'led', '');
+
+  { right stick as keys: 8 directions, in clock order from east }
+  StickMode := smMouse;
+  if LowerCase(CfgStr('right_stick', 'mode', 'mouse')) = 'keys' then
+    StickMode := smKeys;
+  StickThreshold := EnsureRange(CfgFloat('right_stick', 'threshold', 0.7), 0.1, 1);
+  StickRepeat := Max(50, CfgFloat('right_stick', 'repeat_ms', 250));
+  SplitWords(CfgStr('right_stick', 'keys', ''), Words);
+  if Words.Count > 8 then
+    Die('[right_stick] keys: more than 8 tokens');
+  if (StickMode = smKeys) and (Words.Count = 0) then
+    Die('[right_stick] mode = keys needs a keys = ... line');
+  for I := 0 to 7 do
+  begin
+    StickKeys[I].Code := 0;
+    if I < Words.Count then
+      StickKeys[I] := ParseToken(Words[I]);
+  end;
 end;
 
 { ---------- devices ---------- }
@@ -551,10 +575,27 @@ begin
   Syn(KbdFd);
 end;
 
+{ right stick in key mode: held directions keep their keys down }
+procedure ReleaseStickKeys;
+var
+  I: Integer;
+  Tok: TKeyTok;
+begin
+  for I := 0 to 7 do
+    if KeyPresses[I] <> 0 then
+    begin
+      Tok.Shift := StickKeys[I].Shift;
+      Tok.Code := KeyPresses[I];
+      KeyUp(Tok);
+      KeyPresses[I] := 0;
+    end;
+end;
+
 procedure ReleaseAll;
 var
   I: Integer;
 begin
+  ReleaseStickKeys;
   for I := 0 to BUTTON_COUNT - 1 do
     if Pressed[I].Code <> 0 then
     begin
@@ -567,6 +608,15 @@ begin
         KeyUp(Pressed[I]);
       Pressed[I].Code := 0;
     end;
+end;
+
+procedure SetActive(On: Boolean);
+begin
+  ReleaseAll;
+  Active := On;
+  Grab(Active);
+  UpdateLed;
+  Log('mapping ' + BoolToStr(Active, 'on', 'off (raw gamepad)'));
 end;
 
 function LeftDirection: Integer;
@@ -584,6 +634,42 @@ begin
   Result := Result mod 8;
 end;
 
+function RightDirection: Integer;
+var
+  X, Y, Angle: Double;
+begin
+  X := AxisNorm(2);
+  Y := AxisNorm(3);
+  if Hypot(X, Y) < StickThreshold then
+    Exit(-1);
+  Angle := RadToDeg(ArcTan2(-Y, X));      { 0 = east, 90 = north }
+  Result := Round(Angle / 45);
+  if Result < 0 then
+    Inc(Result, 8);
+  Result := Result mod 8;                 { index into DirNames }
+end;
+
+{ right stick in key mode: one keydown per deflection; the key stays down
+  while the direction is held, so the console keyboard repeats it }
+procedure TickStickKeys;
+var
+  D: Integer;
+begin
+  D := RightDirection;
+  if D = PrevRightDir then
+    Exit;
+  ReleaseStickKeys;
+  PrevRightDir := D;
+  if (D >= 0) and (StickKeys[D].Code <> 0) then
+  begin
+    KeyDown(StickKeys[D]);
+    KeyPresses[D] := StickKeys[D].Code;
+    Log(Format('stick %s -> key %d%s',
+      [DirNames[D], StickKeys[D].Code,
+       BoolToStr(StickKeys[D].Shift, ' +shift', '')]));
+  end;
+end;
+
 procedure HandleButton(Code: Word; Value: LongInt);
 var
   I, D: Integer;
@@ -599,11 +685,7 @@ begin
 
   if (Value = 1) and Held[ToggleA] and Held[ToggleB] then
   begin
-    ReleaseAll;
-    Active := not Active;
-    Grab(Active);
-    UpdateLed;
-    Log('mapping ' + BoolToStr(Active, 'on', 'off (raw gamepad)'));
+    SetActive(not Active);
     Exit;
   end;
   if not Active then
@@ -663,6 +745,8 @@ end;
 
 function MouseDeflected: Boolean;
 begin
+  if StickMode = smKeys then
+    Exit(False);
   Result := Hypot(AxisNorm(2), AxisNorm(3)) >= MouseDeadzone;
 end;
 
@@ -706,7 +790,12 @@ end;
 
 procedure OnSignal(Sig: cint); cdecl;
 begin
-  Terminated := True;
+  case Sig of
+    SIGUSR1: WantMode := 1;
+    SIGUSR2: WantMode := 2;
+  else
+    Terminated := True;
+  end;
 end;
 
 function ReadEvents(Fd: cint; FromGamepad: Boolean): Boolean;
@@ -729,7 +818,7 @@ var
   ConfigFile: string;
   Fds: array[0..1] of pollfd;
   Timeout, I: Integer;
-  LastMove, Now: QWord;
+  LastMove, LastStick, Now: QWord;
   Calibrate: Boolean;
 
 begin
@@ -774,6 +863,8 @@ begin
 
   FpSignal(SIGTERM, SignalHandler(@OnSignal));
   FpSignal(SIGINT, SignalHandler(@OnSignal));
+  FpSignal(SIGUSR1, SignalHandler(@OnSignal));
+  FpSignal(SIGUSR2, SignalHandler(@OnSignal));
 
   Active := True;
   Grab(True);
@@ -785,13 +876,23 @@ begin
   Fds[1].fd := JoystickFd;
   Fds[1].events := POLLIN;
   LastMove := GetTickCount64;
+  LastStick := LastMove;
 
   while not Terminated do
   begin
+    if WantMode <> 0 then
+    begin
+      if Active <> (WantMode = 2) then
+        SetActive(WantMode = 2);
+      WantMode := 0;
+    end;
+    { the 1 s cap catches a signal that lands just before poll }
     if Active and MouseDeflected then
       Timeout := 1000 div MouseRate
+    else if Active and (StickMode = smKeys) then
+      Timeout := Max(1, Round(StickRepeat / 4))
     else
-      Timeout := -1;
+      Timeout := 1000;
     if FpPoll(@Fds[0], 2, Timeout) < 0 then
       if fpgeterrno <> ESysEINTR then
         Die('poll failed');
@@ -804,7 +905,15 @@ begin
     if ((Fds[1].revents and POLLIN) <> 0) and not ReadEvents(JoystickFd, False) then
       Die('joystick read failed');
     Now := GetTickCount64;
-    if Active and (Now - LastMove >= QWord(1000 div MouseRate)) then
+    if Active and (StickMode = smKeys) then
+    begin
+      if Now - LastStick >= QWord(Round(StickRepeat)) then
+      begin
+        TickStickKeys;
+        LastStick := Now;
+      end;
+    end
+    else if Active and (Now - LastMove >= QWord(1000 div MouseRate)) then
     begin
       MoveMouse;
       LastMove := Now;

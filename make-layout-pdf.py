@@ -65,6 +65,15 @@ def parse(path):
 
 sec, layers = parse(CONF)
 buttons = sec.get("buttons", {})
+rs = sec.get("right_stick", {})
+rs_keys = rs.get("keys", "").split()
+rs_mode = rs.get("mode", "mouse").lower()
+if rs_mode == "keys":
+    MOUSE_DESC = "keys mode: " + ", ".join(
+        f"{d.upper()} = {k}" for d, k in zip(["E", "NE", "N", "NW", "W", "SW", "S", "SE"], rs_keys)
+    ) if rs_keys else "keys mode (set keys = ...)"
+else:
+    MOUSE_DESC = "mouse pointer (gpm in the console)"
 W, H = landscape(A4)
 c = canvas.Canvas(OUT, pagesize=landscape(A4))
 c.setTitle("rgpad — RG35XXH layout")
@@ -117,7 +126,7 @@ for key, label in names:
 rows = [
     ("Left stick + X / A / B / Y", "character: 8 directions × 4 buttons (p. 2)"),
     ("Left stick at rest + button", "X = Tab, A = Space, B = Backspace, Y = Delete"),
-    ("Right stick", "mouse pointer (gpm in the console)"),
+    ("Right stick", MOUSE_DESC),
     ("Start + Menu", "toggle the mapping (gamepad goes to games)"),
     ("Vol+ / Vol−", "not captured (volume)"),
 ]

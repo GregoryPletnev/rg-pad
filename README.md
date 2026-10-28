@@ -22,10 +22,16 @@ mouse text selection and pasting.
 - Layers cycle with the `menu` button: `abc` (lowercase), `ABC` (uppercase),
   `123` (digits and punctuation). The red LED shows the current layer:
   off, on, or blinking.
-- The right stick moves the pointer. Hold `start` while typing to send
-  Ctrl+character.
+- The right stick moves the pointer by default. With
+  `[right_stick] mode = keys` it becomes eight keys instead: each stick
+  direction holds one key while deflected — put F1–F8 on it and keep the
+  pointer free, or map any other keys.
+- Hold `start` while typing to send Ctrl+character.
 - Hold `start` + `menu` to switch between the mapping and raw gamepad
-  passthrough, so games still see the original device.
+  passthrough, so games still see the original device. A launcher can do
+  the same with signals: `SIGUSR1` switches to passthrough, `SIGUSR2` back to
+  the mapping (`systemctl kill -s USR1 rgpad`). The virtual keyboard and
+  mouse stay in place either way.
 - Stick resting positions are taken as centers at startup (auto-calibration).
 
 See [docs/rgpad-layout.pdf](docs/rgpad-layout.pdf) for the full printable
@@ -75,6 +81,7 @@ All behavior lives in `rgpad.conf`; the shipped file is fully commented.
 | `[buttons]` | button → key, mouse button, or `@layer` action |
 | `[left_stick]` | chord direction threshold, axis inversion |
 | `[mouse]` | right-stick deadzone, speed, rate, accel curve, inversion |
+| `[right_stick]` | stick role: `mouse` or `keys` with a per-direction key table |
 | `[layer name]` | chord tables: 8 directions + `center`, 4 tokens each |
 
 A chord token is a single character (typed on the US layout) or a key name
