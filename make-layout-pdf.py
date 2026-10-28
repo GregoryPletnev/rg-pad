@@ -68,12 +68,6 @@ buttons = sec.get("buttons", {})
 rs = sec.get("right_stick", {})
 rs_keys = rs.get("keys", "").split()
 rs_mode = rs.get("mode", "mouse").lower()
-if rs_mode == "keys":
-    MOUSE_DESC = "keys mode: " + ", ".join(
-        f"{d.upper()} = {k}" for d, k in zip(["E", "NE", "N", "NW", "W", "SW", "S", "SE"], rs_keys)
-    ) if rs_keys else "keys mode (set keys = ...)"
-else:
-    MOUSE_DESC = "mouse pointer (gpm in the console)"
 W, H = landscape(A4)
 c = canvas.Canvas(OUT, pagesize=landscape(A4))
 c.setTitle("rgpad — RG35XXH layout")
@@ -126,7 +120,12 @@ for key, label in names:
 rows = [
     ("Left stick + X / A / B / Y", "character: 8 directions × 4 buttons (p. 2)"),
     ("Left stick at rest + button", "X = Tab, A = Space, B = Backspace, Y = Delete"),
-    ("Right stick", MOUSE_DESC),
+]
+if rs_mode == "keys":
+    rows.append(("Right stick", "keys mode — see the wheel on page 2"))
+else:
+    rows.append(("Right stick", "mouse pointer (gpm in the console)"))
+rows += [
     ("Start + Menu", "toggle the mapping (gamepad goes to games)"),
     ("Vol+ / Vol−", "not captured (volume)"),
 ]
@@ -223,6 +222,47 @@ for (name, lay), (x, y) in zip(layers, centers):
 
 text(W / 2, 44, "Generated from rgpad.conf. Characters are typed on the US "
      "layout; hold Start + character = Ctrl+character.", "Sans", 9, MUTED, "c")
+
+if rs_mode == "keys":
+    # -------- extra page: right stick key wheel --------
+    c.showPage()
+    header("Right stick keys",
+           "mode = keys in [right_stick]: each direction holds one key while "
+           "the stick is deflected past the threshold.")
+    x, y = W / 2, H / 2 - 20
+    R = 130
+    text(x, y + R + 44, "layer-independent", "SansB", 12, MUTED, "c")
+    c.setStrokeColor(LINE)
+    c.setFillColor(FILL)
+    c.circle(x, y, R, stroke=1, fill=1)
+    c.setFillColor(white)
+    c.circle(x, y, 40, stroke=1, fill=1)
+    for k in range(8):
+        a = math.radians(22.5 + 45 * k)
+        c.line(x + 40 * math.cos(a), y + 40 * math.sin(a),
+               x + R * math.cos(a), y + R * math.sin(a))
+    for (dname, ang), tok in zip(DIRS.items(), rs_keys):
+        px = x + 85 * math.cos(math.radians(ang))
+        py = y + 85 * math.sin(math.radians(ang))
+        s = SHORT.get(tok.upper(), tok)
+        fs = 18 if len(s) == 1 else 13
+        text(px, py - fs * 0.35, s, "SansB", fs, INK, "c")
+        ax = x + (R + 10) * math.cos(math.radians(ang))
+        ay = y + (R + 10) * math.sin(math.radians(ang))
+        bx = x + (R + 20) * math.cos(math.radians(ang))
+        by = y + (R + 20) * math.sin(math.radians(ang))
+        c.setStrokeColor(MUTED)
+        c.line(ax, ay, bx, by)
+        for side in (-25, 25):
+            h = math.radians(ang + 180 + side)
+            c.line(bx, by, bx + 5 * math.cos(h), by + 5 * math.sin(h))
+        dx = x + (R - 34) * math.cos(math.radians(ang))
+        dy = y + (R - 34) * math.sin(math.radians(ang))
+        text(dx, dy - 4, dname.upper(), "Sans", 8, MUTED, "c")
+    text(x, y - 6, "stick", "Sans", 9, MUTED, "c")
+    text(x, y - 18, "at rest:", "Sans", 9, MUTED, "c")
+    text(x, y - 30, "no key", "SansB", 9, INK, "c")
+
 c.showPage()
 c.save()
 print("written", OUT)
