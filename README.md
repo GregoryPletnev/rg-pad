@@ -22,10 +22,10 @@ mouse text selection and pasting.
 - Layers cycle with the `menu` button: `abc` (lowercase), `ABC` (uppercase),
   `123` (digits and punctuation). The red LED shows the current layer:
   off, on, or blinking.
-- The right stick moves the pointer by default. With
-  `[right_stick] mode = keys` it becomes eight keys instead: each stick
-  direction holds one key while deflected — put F1–F8 on it and keep the
-  pointer free, or map any other keys.
+- The right stick presses keys by default: each of the 8 directions holds
+  one key while deflected (shipped map: F1–F8) — handy in the console and
+  in Doom-like menus. Set `[right_stick] mode = mouse` to get the pointer
+  back (pair it with `gpm`).
 - Hold `start` while typing to send Ctrl+character.
 - Hold `start` + `menu` to switch between the mapping and raw gamepad
   passthrough, so games still see the original device. A launcher can do
@@ -42,7 +42,7 @@ cheat sheet (2 pages, A4).
 - Anbernic RG35XXH (or another device with `gpio-keys` buttons and an
   `adc-joystick` — the device names are configurable).
 - Linux with uinput (`modprobe uinput`).
-- `gpm` in the console if you want a usable mouse cursor.
+- `gpm` in the console if you use `[right_stick] mode = mouse`.
 
 ## Build
 
